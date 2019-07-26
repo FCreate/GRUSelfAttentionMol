@@ -1,6 +1,6 @@
 import argparse
 from model import *
-from mol_dataset import dataset2array
+from mol_dataset import build_dicts, encode_smiles
 import numpy.ma as ma
 import numpy as np
 import torch
@@ -8,7 +8,7 @@ import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from tensorboardX import SummaryWriter
 from sklearn.model_selection import train_test_split
-
+import pandas as pd
 def make_parser():
     parser = argparse.ArgumentParser(description='PyTorch RNN regressor w/ attention')
 
@@ -40,9 +40,12 @@ def make_parser():
                         help='hidden value for self-attention aka d_a')
     parser.add_argument('--tensorboard', type=str, help = "tensorboard dir")
     parser.add_argument('--ckpt_name', type=str, help="PyTorch checkpoint name")
+
     parser.add_argument('--print_every', type=int, default=20,
                         help='hidden value for self-attention aka d_a')
     parser.add_argument("--resume", action='store_true', help='Continue calculate')
+
+    parser.add_argument("--augment", action='store_true', help='Continue calculate')
     return parser
 
 
@@ -146,40 +149,36 @@ def evaluate(model, data, optimizer, criterion, args, device,writer, epoch):
 
 
 def main():
+    """
+    Main function. This function will be called when program is running.
+    :return: No return
+    """
     args = make_parser().parse_args()
-    writer = SummaryWriter(log_dir=args.tensorboard)
-    print("[Model hyperparams]: {}".format(str(args)))
-    x, y, char2index, char2count, index2char  = dataset2array()
-    number_of_words = x.shape[1]
-
-    output_scaler = OurRobustToNanScaler()
-    y = np.float32(y)
-    y = output_scaler.fit_transform(y)
-    X_train, X_test, y_train, y_test = train_test_split(x, y)
-    train_dataset = ToxicDataset(X_train, y_train)
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-
-    test_dataset = ToxicDataset(X_test, y_test)
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
 
     cuda = torch.cuda.is_available() and args.cuda
     device = torch.device("cpu") if not cuda else torch.device("cuda:0")
-
     seed_everything(seed=args.seed, cuda=cuda)
 
-    n_endpoints = y_train.shape[1]
+    writer = SummaryWriter(log_dir=args.tensorboard)
+    print("[Model hyperparams]: {}".format(str(args)))
+    df = pd.read_csv("data/df_tox_85165.csv")
+    smiles = list(df["SMILES"])
+    del df["SMILES"]
+    y = df.values
+    output_scaler = OurRobustToNanScaler()
+    y = np.float32(y)
+    y = output_scaler.fit_transform(y)
+
+
+    char2index, char2count, index2char  = build_dicts(smiles)
+    x = encode_smiles(smiles,char2index, max_len=100, augment=args.augment)
+    number_of_words = x.shape[1]
+
+    n_endpoints = len(df.columns)
     args.nlabels = n_endpoints # hack to not clutter function arguments
 
     ntokens = len(char2index)
-    embedding = nn.Embedding(ntokens, args.emsize)
-
-    encoder = Encoder(args.emsize, args.hidden, nlayers=args.nlayers,
-                      dropout=args.drop, bidirectional=args.bi)
-
-    attention_dim = args.hidden if not args.bi else 2*args.hidden
-    attention = BahdanauSA(attention_dim, args.hid_sa_val, args.r, device)
-
-    model = Model(embedding, encoder, attention, number_of_words, n_endpoints)
+    model = Model(args,ntokens, number_of_words, n_endpoints)
     model.to(device)
 
     criterion = nn.MSELoss()
@@ -191,6 +190,16 @@ def main():
         model.load_state_dict(torch.load(args.ckpt_name))
         model.eval()
     for epoch in range(0, args.epochs):
+
+        x = encode_smiles(smiles, char2index, max_len=100, augment=args.augment)
+        X_train, X_test, y_train, y_test = train_test_split(x, y, random_state=42)
+
+        train_dataset = ToxicDataset(X_train, y_train)
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+
+        test_dataset = ToxicDataset(X_test, y_test)
+        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
+
         if args.resume:
             best_valid_loss = evaluate(model,test_loader, optimizer, criterion, args, device, writer, epoch)
 
