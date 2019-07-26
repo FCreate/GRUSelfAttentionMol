@@ -1,1 +1,1 @@
-python train.py --emsize 64 --hidden 512 --nlayers 2 --lr 0.0003 --seed 42 --r 10 --hid_sa_val 100 --batch_size 512  --epochs 5000 --bi --cuda --print_every 20 --seed 42 --tensorboard "lstm_first_run" --ckpt_name "lstm.pk"
+python train.py --emsize 64 --hidden 512 --nlayers 3 --lr 0.001 --seed 42 --r 10 --hid_sa_val 100 --batch_size 512 --epochs 5000 --bi --cuda --print_every 20 --seed 42 --tensorboard "runs/lstmfixed" --ckpt_name "ckpt/lstmfixed.pk"

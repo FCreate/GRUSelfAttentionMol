@@ -10,17 +10,17 @@ from tensorboardX import SummaryWriter
 from sklearn.model_selection import train_test_split
 
 def make_parser():
-    parser = argparse.ArgumentParser(description='PyTorch RNN Classifier w/ attention')
+    parser = argparse.ArgumentParser(description='PyTorch RNN regressor w/ attention')
 
     parser.add_argument('--emsize', type=int, default=300,
-                        help='size of word embeddings [Uses pretrained on 50, 100, 200, 300]')
+                        help='size of word embeddings')
     parser.add_argument('--hidden', type=int, default=500,
                         help='number of hidden units for the RNN encoder')
     parser.add_argument('--nlayers', type=int, default=2,
                         help='number of layers of the RNN encoder')
     parser.add_argument('--lr', type=float, default=1e-3,
                         help='initial learning rate')
-    parser.add_argument('--clip', type=float, default=5,
+    parser.add_argument('--clip', type=float, default=0.0,
                         help='gradient clipping')
     parser.add_argument('--epochs', type=int, default=10,
                         help='upper epoch limit')
@@ -42,6 +42,7 @@ def make_parser():
     parser.add_argument('--ckpt_name', type=str, help="PyTorch checkpoint name")
     parser.add_argument('--print_every', type=int, default=20,
                         help='hidden value for self-attention aka d_a')
+    parser.add_argument("--resume", action='store_true', help='Continue calculate')
     return parser
 
 
@@ -112,6 +113,7 @@ def train(model, data, optimizer, criterion, args, device, writer, epoch):
         loss = criterion(output, y)
         total_loss.append(loss.item())
         loss.backward()
+        #torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
         optimizer.step()
         if ((batch_num%args.print_every)==0):
             writer.add_scalar('train_loss', (sum(total_loss) / len(total_loss)), batch_num+(epoch*len(data)))
@@ -137,10 +139,9 @@ def evaluate(model, data, optimizer, criterion, args, device,writer, epoch):
         for  batch_num, (x, y, mask) in enumerate(data):
             x, y, mask = x.to(device, ), y.to(device), mask.to(device)
             output = model(x)
-            total_loss.append(criterion(mask * output, mask * y))
+            total_loss.append((criterion(mask * output, mask * y)).item())
             if ((batch_num % args.print_every) == 0):
                 writer.add_scalar('test_loss', (sum(total_loss) / len(total_loss)), batch_num + (epoch * len(data)))
-                print((sum(total_loss) / len(total_loss)))
     return (sum(total_loss) / len(total_loss))
 
 
@@ -149,15 +150,17 @@ def main():
     writer = SummaryWriter(log_dir=args.tensorboard)
     print("[Model hyperparams]: {}".format(str(args)))
     x, y, char2index, char2count, index2char  = dataset2array()
+    number_of_words = x.shape[1]
+
     output_scaler = OurRobustToNanScaler()
     y = np.float32(y)
     y = output_scaler.fit_transform(y)
     X_train, X_test, y_train, y_test = train_test_split(x, y)
     train_dataset = ToxicDataset(X_train, y_train)
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=512, shuffle=True)
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
 
     test_dataset = ToxicDataset(X_test, y_test)
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=512, shuffle=False)
+    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
 
     cuda = torch.cuda.is_available() and args.cuda
     device = torch.device("cpu") if not cuda else torch.device("cuda:0")
@@ -175,16 +178,22 @@ def main():
 
     attention_dim = args.hidden if not args.bi else 2*args.hidden
     attention = BahdanauSA(attention_dim, args.hid_sa_val, args.r, device)
-    print("n_endpoints ", n_endpoints)
-    model = Classifier(embedding, encoder, attention, n_endpoints)
+
+    model = Model(embedding, encoder, attention, number_of_words, n_endpoints)
     model.to(device)
 
     criterion = nn.MSELoss()
-    optimizer = torch.optim.Adam(model.parameters(), args.lr, amsgrad=True)
+    optimizer = torch.optim.Adam(model.parameters(), args.lr)
 
     best_valid_loss = None
 
-    for epoch in range(1, args.epochs + 1):
+    if args.resume:
+        model.load_state_dict(torch.load(args.ckpt_name))
+        model.eval()
+    for epoch in range(0, args.epochs):
+        if args.resume:
+            best_valid_loss = evaluate(model,test_loader, optimizer, criterion, args, device, writer, epoch)
+
         train_loss = train(model, train_loader, optimizer, criterion, args, device, writer, epoch)
         writer.add_scalar('epoch_train_loss', train_loss, epoch)
         test_loss = evaluate(model,test_loader, optimizer, criterion, args, device, writer, epoch)

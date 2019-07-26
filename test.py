@@ -92,7 +92,7 @@ def mse(y_true, y_pred):
     return np.mean((y_true- y_pred)**2)
 
 def seed_everything(seed, cuda=False):
-  """
+    """
     Set the random seed manually for reproducibility.
         :param seed: seed for all initializers
         :param cuda: if cuda == True, torch.cuda will be manually seeded.
@@ -112,6 +112,7 @@ def main():
     endpoints = list(df.columns[1:])
     #Get x, y, and other dictionaries.
     x, y, char2index, char2count, index2char  = dataset2array()
+    number_of_words = x.shape[1]
     output_scaler = OurRobustToNanScaler()
     y = np.float32(y)
 
@@ -142,7 +143,7 @@ def main():
     attention_dim = args.hidden if not args.bi else 2*args.hidden
     attention = BahdanauSA(attention_dim, args.hid_sa_val, args.r, device)
     print("n_endpoints ", n_endpoints)
-    model = Classifier(embedding, encoder, attention, n_endpoints)
+    model = Model(embedding, encoder, attention, number_of_words, n_endpoints)
     #Load model hear.
     model.load_state_dict(torch.load(args.ckpt_name))
     model.to(device)

@@ -45,15 +45,65 @@ class Flatten(nn.Module):
   def forward(self, input):
     return input.view(input.size(0), -1)
 
+class LinearLayer(nn.Module):
+  def __init__(self, size_in, size_out, p=0.5, is_bn=True, activation=True):
+    super(LinearLayer, self).__init__()
+    self.size_in = size_in
+    self.size_out = size_out
+    self.is_bn = is_bn
+    self.activation = activation
+    self.p = p
+    self.fc = nn.Linear(self.size_in, self.size_out)
+    self.dropout = nn.Dropout(self.p)
+    self.elu = nn.ELU()
+    if self.is_bn:
+      self.batchnorm = nn.BatchNorm1d(size_out)
+    nn.init.xavier_uniform_(self.fc.weight)
+    self.fc.bias.data.fill_(0.01)
 
-class Classifier(nn.Module):
-  def __init__(self, embedding, encoder,attention, n_endpoints):
-    super(Classifier, self).__init__()
+  def forward(self, x):
+    output = self.fc(x)
+    if self.is_bn:
+      output = self.batchnorm(output)
+    if self.activation:
+      output = self.elu(output)
+    output = self.dropout(output)
+    return output
+
+
+class Decoder(nn.Module):
+  def __init__(self,in_shape, out_shape):
+    super(Decoder, self).__init__()
+    self.linear1 = LinearLayer(in_shape, 128, 0.0, is_bn = False)
+    #self.linear1_5 = LinearLayer(1024, 512, 0.5)
+    # self.linear1_5 = LinearLayer(4096, 2048, 0.5)
+    # self.linear1_7 = LinearLayer(2048, 1024, 0.5)
+    # self.linear1_8 = LinearLayer(4096, 512, 0.5)
+    # self.linear1_5 = LinearLayer(1024, 512, 0.5)
+    #self.linear2 = LinearLayer(512, 256, 0.5)
+    self.linear3 = LinearLayer(128, 64, 0.0, is_bn = False)
+    #self.linear4 = LinearLayer(128, 64, 0.5)
+    #self.linear5 = LinearLayer(64, 32, 0.25)
+    self.linear6 = LinearLayer(64, 29, 0.0, is_bn = False)
+    self.linear7 = LinearLayer(29, out_shape, 0.0, is_bn=False, activation=False)
+    self.layers = [self.linear1, self.linear3, self.linear6,self.linear7]
+
+  def forward(self, x):
+    output = x
+    for layer in self.layers:
+      output = layer(output)
+    return output
+
+class Model(nn.Module):
+  def __init__(self, embedding, encoder,attention, number_of_words, n_endpoints):
+    super(Model, self).__init__()
     self.embedding = embedding
     self.encoder = encoder
     self.attention = attention
     self.n_endpoints = n_endpoints
-    self.decoder = nn.Linear(self.attention.r*self.attention.out_hid, n_endpoints)
+    self.number_of_words = number_of_words
+    #self.decoder = nn.Linear(self.attention.r*self.attention.out_hid, n_endpoints)
+    self.decoder = Decoder(self.attention.r*self.number_of_words, self.n_endpoints)
     self.flatten = Flatten()
 
 
